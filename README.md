@@ -531,10 +531,10 @@ This is a typical design where the **data** is placed at the aligned address, bu
 
 The user-supplied pointer (`ptr`) starts at the aligned address. Here's how the memory block layout works:
 ```
-|<----------------- blockSize ----------------->|
-| blockStart | Header | padding |    ptr      | ... user data ... | blockEnd
-                        ↑        ↑
-                  adjustment   aligned ptr
+|<------------------------ blockSize ------------------->|
+| blockStart |<----------- adjustment ------------------>| ptr | ... user data ... | blockEnd
+                      |<-- AllocationHeader -->|         ↑
+                                                         aligned ptr
 ```
 
 - **blockStart** is the `bestFit` address.
