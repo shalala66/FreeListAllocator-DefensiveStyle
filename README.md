@@ -533,7 +533,8 @@ The user-supplied pointer (`ptr`) starts at the aligned address. Here's how the 
 ```
 |<------------------------ blockSize ------------------->|
 | blockStart |<----------- adjustment ------------------>| ptr | ... user data ... | blockEnd
-                      |<-- AllocationHeader -->|         ↑
+                                |<-- AllocationHeader -->|
+                                                         ↑
                                                          aligned ptr
 ```
 
