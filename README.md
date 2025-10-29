@@ -892,6 +892,11 @@ adjustment = padding + header:
 - [Habr Article on Memory Allocators](https://habr.com/ru/articles/304308/)
 - [StackOverflow: Aligning an Address Forward](https://stackoverflow.com/questions/53914652/aligning-an-address-forward)
 - [Alexandrescu CppCon Video on Allocators](https://www.youtube.com/watch?v=LIb3L4vKZ7U&t=2598s&ab_channel=CppCon)
+- [C++ Allocator](https://en.cppreference.com/w/cpp/named_req/Allocator)
+- [C++ Memory Allocator](https://en.cppreference.com/w/cpp/memory/allocator)
+- [C++ Allocator Traits](https://en.cppreference.com/w/cpp/memory/allocator_traits)
+- [Data Structure Alignment - Wikipedia](https://en.wikipedia.org/wiki/Data_structure_alignment)
+- [Data Alignment - TheWolfSound](https://thewolfsound.com/what-is-data-alignment/)
 
 
 ## Conclusion
