@@ -93,7 +93,7 @@ template<
 > 
 class vector;
 ```
-
+Source:
 [🔗 cppreference: std::vector](https://en.cppreference.com/w/cpp/container/vector)
 
 
@@ -102,6 +102,7 @@ class vector;
 The `std::allocator` class template serves as the default allocator used by all standard library containers when no custom allocator is specified.
 It is stateless, meaning that all instances of a given allocator type are interchangeable, compare equal, and are capable of deallocating memory allocated by any other instance of the same type.
 
+Source:
 [🔗 cppreference: std::allocator](https://en.cppreference.com/w/cpp/memory/allocator)
 
 
@@ -124,7 +125,9 @@ This class supplies default implementations for most allocator-related behaviors
 
 In short, as long as the allocator you pass to an STL container is compatible with `std::allocator_traits`, it can be used seamlessly.
 
+Source:
 [🔗 cppreference: Allocator Requirements](https://en.cppreference.com/w/cpp/named_req/Allocator)
+
 
 ## Inside `std::vector`
 
@@ -483,7 +486,8 @@ This ensures that the address is aligned correctly, considering the size of `T` 
   - `124 +`: There is space for user data after the header.
  
 
-**Note:** The `std::size_t` type is the type returned by the `sizeof` operator:
+
+### **Note:** The `std::size_t` type is the type returned by the `sizeof` operator:
 
 ```cpp
 namespace std {
@@ -512,6 +516,9 @@ To solve this, we simply use the algorithm in this form:
 ```
 (offset + (alignment - 1u)) & ~(alignment - 1u)
 ```
+Source:
+ - [🔗 indiegamedev.net ](https://indiegamedev.net/2022/03/27/custom-c20-memory-allocators-for-stl-containers/#:~:text=std%3A%3Asize_t-,align_forward_adjustment,-(const%20void)
+
 
 In addition to this section, there is another potentially dangerous situation with `std::size_t`.
 
@@ -532,6 +539,11 @@ To avoid this, we perform the comparison via the addition operation:
 ```
 if (bestFit->size <= bestFitTotalSize + sizeof(AllocationHeader)) ...
 ```
+
+Sources: 
+ - [🔗 gamedev.net ](https://www.gamedev.net/tutorials/programming/general-and-gameplay-programming/c-custom-memory-allocation-r3010/#:~:text=will%20be%20impossible-,if,-(free_block%2D%3Esize%20%2D%20total_size)
+
+ - [🔗 indiegamedev.net ](https://indiegamedev.net/2022/03/27/custom-c20-memory-allocators-for-stl-containers/#:~:text=std%3A%3Abad_alloc()%3B%0A%20%20%20%20%7D-,if,-(bestFit%2D%3Esize%20%2D%20bestFitTotalSize)
 
 
 ## 3. Freeing Memory Blocks with Care
@@ -666,19 +678,19 @@ This ensures that the memory block is properly freed by first accessing the meta
 
 ## AllocationHeader Memory Trick Explanation
 
-```
+```cpp
 struct FreeBlock {
     size_t size;
     FreeBlock* next;
 };
 ```
 
-```
+```cpp
 std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
 ```
 ...
 
-```
+```cpp
 FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
 ```
 
@@ -705,7 +717,7 @@ adjustment = padding:
 
 ## Overlap Issue When Adding `prev` to FreeBlock
 
-```
+```cpp
 struct FreeBlock {
     size_t size;
     FreeBlock* next;
@@ -713,12 +725,12 @@ struct FreeBlock {
 };
 ```
 
-```
+```cpp
 std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
 ```
 ...
 
-```
+```cpp
 FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
 ```
 
@@ -730,11 +742,10 @@ As a result, an **overlap** occurs between the `FreeBlock` structure and the `ne
 The memory region allocated for `newBlock` actually overwrites the metadata of the `FreeBlock` —  
 specifically (in order: 1. `size`, 2. `next`, 3. `prev`),- **Line 142 (C++)**.
 
-
+```cpp
 Exception thrown --> Write access violation:
 bestFit = 0x0000021483a43660 {size=0x0000010c next=0x0000000000000000 <NULL> prev = 0x000000f800000000 {size=??? next=??? prev=??? } }
 
-```
 >	FreeListAllocator.exe!FreeListAllocator::Allocate(const unsigned __int64 & size, const unsigned __int64 & alignment) Line 142	C++:
 
 else
@@ -768,7 +779,7 @@ adjustment = padding:
 
 ## Proving the Exception Cause
 
-```
+```cpp
 struct FreeBlock {
     size_t size;
     FreeBlock* prev;
@@ -777,12 +788,12 @@ struct FreeBlock {
 };
 ```
 
-```
+```cpp
 std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
 ```
 ...
 
-```
+```cpp
 FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
 ```
 
@@ -791,7 +802,7 @@ If we slightly modify the layout of the `FreeBlock` structure, even though the e
 we can still observe a **difference in the line number** reported during exception handling —  
 which clearly indicates the memory overlap problem,- **Line 140 (C++)**.
 
-```
+```cpp
 Exception thrown --> Write access violation:
 bestFit = 0x0000025e74624530 {size=0x0000010c prev=0x0000000000000000 <NULL> next=0x000000f800000000 {size=??? prev=??? next=??? } }
 
@@ -830,7 +841,7 @@ adjustment = padding:
 
 ## Fixing the Overlapping Issue
 
-```
+```cpp
 struct FreeBlock {
     size_t size;
     FreeBlock* next;
@@ -838,12 +849,12 @@ struct FreeBlock {
 };
 ```
 
-```
+```cpp
 std::size_t totalSize = size + adjustment + sizeof(AllocationHeader);  --->  bestFitTotalSize    <------\
 ```
 ...
 
-```
+```cpp
 FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
 ```
 
@@ -864,8 +875,23 @@ adjustment = padding + header:
 
 ---
 
-
-
+### Deep Notes:
+- [Custom C++20 Memory Allocators for STL Containers](https://indiegamedev.net/2022/03/27/custom-c20-memory-allocators-for-stl-containers/)
+- [C Custom Memory Allocation](https://www.gamedev.net/tutorials/programming/general-and-gameplay-programming/c-custom-memory-allocation-r3010/)
+- [Writing Your Own Memory Allocators](https://screwjankgames.github.io/engine%20programming/2020/09/24/writing-your-own-memory-allocators.html?utm_source=chatgpt.com)
+- [Understanding std::align](https://lesleylai.info/en/std-align/)
+- [Video: Custom Memory Allocators](https://youtu.be/pP15kDeXJU0)
+- [C++ Design: Allocators](https://hackingcpp.com/cpp/design/allocators.html)
+- [Writing a Memory Allocator](http://dmitrysoshnikov.com/compilers/writing-a-memory-allocator/)
+- [C++ Allocators for Games](https://anki3d.org/cpp-allocators-for-games/)
+- [cppreference: std::align](https://en.cppreference.com/w/cpp/memory/align)
+- [Apache StdCXX: Allocator Reference](https://stdcxx.apache.org/doc/stdlibref/allocator.html)
+- [ROS Advanced Allocator Template Tutorial](https://docs.ros.org/en/foxy/Tutorials/Advanced/Allocator-Template-Tutorial.html)
+- [Oracle Documentation: Memory Allocators](https://docs.oracle.com/cd/E19205-01/819-3703/15_3.htm)
+- [Medium Article: Implementing Custom Allocators](https://medium.com/@simontoth/daily-bit-e-of-c-implementing-custom-allocators-d8a54c44a1dc)
+- [Habr Article on Memory Allocators](https://habr.com/ru/articles/304308/)
+- [StackOverflow: Aligning an Address Forward](https://stackoverflow.com/questions/53914652/aligning-an-address-forward)
+- [Alexandrescu CppCon Video on Allocators](https://www.youtube.com/watch?v=LIb3L4vKZ7U&t=2598s&ab_channel=CppCon)
 
 
 ## Conclusion
