@@ -80,6 +80,64 @@ int main() {
 
 3. **Zeroing out freed memory**: 
    - Freed memory is zeroed out to prevent access to stale data, ensuring that no sensitive information remains in memory after deallocation. This is particularly important for preventing security vulnerabilities such as data leaks.
+  
+
+# Understanding `std::vector` and Allocators in C++
+
+## Vector Class Declaration
+
+```cpp
+template<
+    class T,
+    class Allocator = std::allocator<T>
+> 
+class vector;
+```
+
+[🔗 cppreference: std::vector](https://en.cppreference.com/w/cpp/container/vector)
+
+
+## Default Allocator: `std::allocator`
+
+The `std::allocator` class template serves as the default allocator used by all standard library containers when no custom allocator is specified.
+It is stateless, meaning that all instances of a given allocator type are interchangeable, compare equal, and are capable of deallocating memory allocated by any other instance of the same type.
+
+[🔗 cppreference: std::allocator](https://en.cppreference.com/w/cpp/memory/allocator)
+
+
+## Allocator Overview
+
+An allocator is a mechanism used to obtain and release memory, as well as to construct and destroy objects stored in that memory.
+The allocator type must satisfy the Allocator requirements.
+If `Allocator::value_type` is not identical to `T`, the program will be ill-formed.
+
+All standard library components that may need to allocate or release storage — including `std::string`, `std::vector`, and all containers except `std::array`, as well as types like `std::shared_ptr` and `std::function` (up to C++17) — use an Allocator object.
+This object must be of a class type that meets the allocator requirements.
+
+Many allocator requirements are optional because allocator-aware classes (such as standard containers) interact with allocators indirectly through `std::allocator_traits`.
+The `std::allocator_traits` class provides default implementations for many of these optional requirements.
+
+## In Other Words
+
+All STL containers that use an allocator actually do so through `std::allocator_traits`.
+This class supplies default implementations for most allocator-related behaviors.
+
+In short, as long as the allocator you pass to an STL container is compatible with `std::allocator_traits`, it can be used seamlessly.
+
+[🔗 cppreference: Allocator Requirements](https://en.cppreference.com/w/cpp/named_req/Allocator)
+
+## Inside `std::vector`
+
+Inside the implementation of `std::vector`, the code utilizes `std::allocator_traits<std::allocator<int>>`.
+This default setup essentially directs all allocation and deallocation operations through the standard `new` and `delete` operators.
+
+- **`std::allocator`** — the default allocator used by all standard library containers when no custom allocator is provided. It is stateless, meaning all instances of the same type are interchangeable and can deallocate each other’s memory.  
+- **Allocators** — handle memory acquisition, release, and the construction/destruction of elements stored in that memory.  
+- **`std::allocator_traits`** — acts as an intermediary between containers and allocators, providing default implementations for most allocator behaviors.  
+- **STL Containers** — such as `std::vector`, `std::string`, and others, interact with allocators indirectly through `std::allocator_traits`.  
+- **`std::vector` Implementation** — internally uses `std::allocator_traits<std::allocator<int>>`, routing all allocation and deallocation operations through the standard `new` and `delete` operators.  
+
+
 
 ### STL Adaptor
 
@@ -423,6 +481,57 @@ This ensures that the address is aligned correctly, considering the size of `T` 
   - `112 % 8 = 0`: The alignment is correct.
   - `112 - 123`: There is exactly 12 bytes for the header (`AllocationHeader`).
   - `124 +`: There is space for user data after the header.
+ 
+
+**Note:** The `std::size_t` type is the type returned by the `sizeof` operator:
+
+```cpp
+namespace std {
+    using size_t = decltype(sizeof(0));
+}
+```
+
+The `sizeof` operator returns an **unsigned integer type**, which can vary depending on the platform, such as:  
+`unsigned int`, `unsigned long`, `unsigned long long` (in MSVC), `unsigned __int64`, and others.
+So we have:
+```
+std::size_t → unsigned integer type
+```
+Because of this, in the expression:
+```
+(offset + (alignment - 1)) & -alignment;
+```
+If the variable `alignment` is of type `std::size_t`, an **unsigned wrap-around** occurs.  
+This means that the unary minus does **not** produce a negative value but instead yields a very large unsigned mask,  
+which can result in **overflow**.
+
+Therefore, in addition to being potentially **undefined behavior (UB)**, this expression can also generate a **compile-time warning or error**:
+Compiler warning (level 2) C4146 - unary minus operator applied to unsigned type, result still unsigned
+
+To solve this, we simply use the algorithm in this form:
+```
+(offset + (alignment - 1u)) & ~(alignment - 1u)
+```
+
+In addition to this section, there is another potentially dangerous situation with `std::size_t`.
+
+### Issue with `bestFit->size - bestFitTotalSize` and unsigned overflow
+
+In the FreeListAllocator implementation, there is a potential problem in the following check:
+```
+if (bestFit->size - bestFitTotalSize <= sizeof(AllocationHeader)) ...
+```
+
+The issue arises because `bestFit->size` is of type `std::size_t`, an unsigned integer.  
+
+- If `bestFitTotalSize` exceeds `bestFit->size`, the subtraction would be negative if signed,  
+  but since `std::size_t` is unsigned, it **wraps around** to a very large positive number.  
+- As a result, the condition is **never satisfied**, even when logically the block may be smaller than the `AllocationHeader` size.
+
+To avoid this, we perform the comparison via the addition operation:
+```
+if (bestFit->size <= bestFitTotalSize + sizeof(AllocationHeader)) ...
+```
 
 
 ## 3. Freeing Memory Blocks with Care
@@ -553,6 +662,210 @@ ptr - header->adjustment        // Reaches the bestFit location
 ```
 
 This ensures that the memory block is properly freed by first accessing the metadata (header) and then calculating the correct memory address for the free operation.
+
+
+## AllocationHeader Memory Trick Explanation
+
+```
+struct FreeBlock {
+    size_t size;
+    FreeBlock* next;
+};
+```
+
+```
+std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
+```
+...
+
+```
+FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+```
+
+The memory space for the `AllocationHeader` is not explicitly reserved.  
+Instead, a clever **memory trick** is used here — the header (`AllocationHeader`) is **hidden inside the padding area** of the `FreeBlock`.
+
+Since the `FreeBlock` structure is relatively small (16 bytes), the starting address of the newly allocated block (`newBlock`) falls just after  
+`bestFit + bestFitTotalSize`. This means that there is **no overlap** between the `FreeBlock` structure and the new allocation block.  
+However, the boundary between them is very close because these limits are not calculated with absolute precision.
+
+Additionally, depending on the **compiler** and its **alignment rules**, those extra 4 bytes of padding could be arranged differently,  
+which theoretically might cause an overlap with the `AllocationHeader` — though this is only a **theoretical possibility**.
+
+adjustment = padding:
+```
+|<---------------------------- blockSize ----------------------->|
+|<---- FreeBlock (size, next) ----->|<------- adjustment ------->| ptr | ... user data ... | blockEnd
+                                        |<-- AllocationHeader -->|                         ↑
+                                                                 ↑                         newBlock starts here
+                                                                 aligned ptr
+```
+
+---
+
+## Overlap Issue When Adding `prev` to FreeBlock
+
+```
+struct FreeBlock {
+    size_t size;
+    FreeBlock* next;
+    FreeBlock* prev;    <------\
+};
+```
+
+```
+std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
+```
+...
+
+```
+FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+```
+
+When the `prev` pointer is added (making the `FreeBlock` structure 24 bytes in size),  
+and the `newBlock` is still positioned using `bestFit + bestFitTotalSize`,  
+the size of the `AllocationHeader` is **not accounted for**.  
+
+As a result, an **overlap** occurs between the `FreeBlock` structure and the `newBlock`.  
+The memory region allocated for `newBlock` actually overwrites the metadata of the `FreeBlock` —  
+specifically (in order: 1. `size`, 2. `next`, 3. `prev`),- **Line 142 (C++)**.
+
+
+Exception thrown --> Write access violation:
+bestFit = 0x0000021483a43660 {size=0x0000010c next=0x0000000000000000 <NULL> prev = 0x000000f800000000 {size=??? next=??? prev=??? } }
+
+```
+>	FreeListAllocator.exe!FreeListAllocator::Allocate(const unsigned __int64 & size, const unsigned __int64 & alignment) Line 142	C++:
+
+else
+    {
+        FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+        newBlock->size = bestFit->size - bestFitTotalSize;
+        newBlock->next = bestFit->next;
+        newBlock->prev = bestFit->prev;
+
+        if (bestFit->next != nullptr)           
+            bestFit->next->prev = newBlock;
+        if (bestFit->prev != nullptr)            
+            bestFit->prev->next = newBlock;   <------  bestFit->**prev** was 0xF800000000
+        else
+            m_freeBlocks = newBlock;
+
+        
+    }
+```
+
+adjustment = padding:
+```
+|<------------------------------ blockSize --------------------------->|
+|<---- FreeBlock (size, next, prev) ----->|<------- adjustment ------->| ptr | ... user data ... | blockEnd
+                             ↑                |<-- AllocationHeader -->|                         
+                             newBlock starts here                      ↑                         
+                                                                       aligned ptr
+```
+
+---
+
+## Proving the Exception Cause
+
+```
+struct FreeBlock {
+    size_t size;
+    FreeBlock* prev;
+    FreeBlock* next;    <------\
+    
+};
+```
+
+```
+std::size_t totalSize = size + adjustment;  --->  bestFitTotalSize
+```
+...
+
+```
+FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+```
+
+It is quite easy to demonstrate that the **exception** occurs precisely because of this issue.  
+If we slightly modify the layout of the `FreeBlock` structure, even though the entire metadata becomes corrupted,  
+we can still observe a **difference in the line number** reported during exception handling —  
+which clearly indicates the memory overlap problem,- **Line 140 (C++)**.
+
+```
+Exception thrown --> Write access violation:
+bestFit = 0x0000025e74624530 {size=0x0000010c prev=0x0000000000000000 <NULL> next=0x000000f800000000 {size=??? prev=??? next=??? } }
+
+
+>	FreeListAllocator.exe!FreeListAllocator::Allocate(const unsigned __int64 & size, const unsigned __int64 & alignment) Line 140	C++:
+
+else
+    {
+        FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+        newBlock->size = bestFit->size - bestFitTotalSize;
+        newBlock->next = bestFit->next;
+        newBlock->prev = bestFit->prev;
+
+        if (bestFit->next != nullptr)           
+            bestFit->next->prev = newBlock;   <------  bestFit->next was 0xF800000000
+
+        if (bestFit->prev != nullptr)            
+            bestFit->prev->next = newBlock;
+        else
+            m_freeBlocks = newBlock;
+
+        
+    }
+```
+
+adjustment = padding:
+```
+|<------------------------------ blockSize --------------------------->|
+|<---- FreeBlock (size, prev, next) ----->|<------- adjustment ------->| ptr | ... user data ... | blockEnd
+                             ↑                |<-- AllocationHeader -->|                         
+                             newBlock starts here                      ↑                         
+                                                                       aligned ptr
+```
+
+---
+
+## Fixing the Overlapping Issue
+
+```
+struct FreeBlock {
+    size_t size;
+    FreeBlock* next;
+    FreeBlock* prev;
+};
+```
+
+```
+std::size_t totalSize = size + adjustment + sizeof(AllocationHeader);  --->  bestFitTotalSize    <------\
+```
+...
+
+```
+FreeBlock* newBlock = reinterpret_cast<FreeBlock*>(ptr_add(bestFit, bestFitTotalSize));
+```
+
+To prevent this **overlapping problem**, we simply add the size of the `AllocationHeader`  
+(`sizeof(AllocationHeader)`) to the `totalSize` calculation.  
+
+By doing this, the **WAV (Write Access Violation)** error is completely eliminated,  
+as the allocated memory regions no longer overlap.
+
+adjustment = padding + header:
+```
+|<--------------------------- blockSize ---------------------------->|
+|<---- FreeBlock (size, next, prev) ---->|<------- adjustment ------>| aligned ptr | ... user data ... | blockEnd
+                                            |<-- AllocationHeader -->|                                 ↑
+                                                                     ↑                                 newBlock starts here
+                                                                     aligned ptr
+```
+
+---
+
+
+
 
 
 ## Conclusion
